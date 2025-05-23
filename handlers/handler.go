@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 )
@@ -134,29 +135,108 @@ func replyMethodSelection(conn net.Conn, methods []byte) error {
 // and destination addresses, and return one or more reply messages, as
 // appropriate for the request type.
 func readSockRequest(conn net.Conn) error {
-	// VER, CMD, RSV, ATYP
-	verToAytp := make([]byte, 4)
-	if readLen, err := conn.Read(verToAytp); err != nil {
+	// ---------------- READ Reqeust Header
+	header := make([]byte, 4)
+	if readLen, err := conn.Read(header); err != nil {
 		return err
 	} else if readLen != 4 {
 		return errors.New("ver to aytp in socks5h request isn't of length 4")
 	}
 
-	if verToAytp[0] != SOCKS5H_VERSION {
-		return errors.New("request socks5 version is not 5")
+	ver, cmd, rsv, atyp := header[0], header[1], header[2], header[3]
+
+	if ver != SOCKS5H_VERSION || rsv != RSV {
+		return errors.New("invalid version or rsv")
 	}
 
-	if verToAytp[1] < CONNECT_cmd || verToAytp[1] > UDP_ASSOCIATE_cmd {
+	if cmd < CONNECT_cmd || cmd > UDP_ASSOCIATE_cmd {
 		return errors.New("request cmd type is invalid")
 	}
 
-	if verToAytp[2] != RSV {
-		return errors.New("request has RSV missing")
+	// ---------------- READ Address and Port
+	var addr, port []byte
+	var err error
+
+	switch atyp {
+	case IP_V4_addr:
+		addr, port, err = readIPV4Addr(conn)
+	case DOMAINNAME_addr:
+		addr, port, err = readDomainNameAddr(conn)
+	case IP_V6_addr:
+		addr, port, err = readIPV6Addr(conn)
+	default:
+		err = errors.New("invalid atyp provided")
 	}
 
-	if verToAytp[3] < IP_V4_addr || verToAytp[3] > IP_V6_addr {
-		return errors.New("request sent invalid ATYP")
+	if err != nil {
+		return err
 	}
 
+	fmt.Println(addr, port)
 	return nil
+}
+
+func readIPV4Addr(conn net.Conn) (ipv4 []byte, port []byte, err error) {
+	ipv4 = make([]byte, 4)
+	port = make([]byte, 2)
+
+	if readLen, err := conn.Read(ipv4); err != nil {
+		return nil, nil, err
+	} else if readLen != 4 {
+		return nil, nil, errors.New("unable to ipv4")
+	}
+
+	if readLen, err := conn.Read(port); err != nil {
+		return nil, nil, err
+	} else if readLen != 2 {
+		return nil, nil, errors.New("unable to ipv4 port")
+	}
+
+	return
+}
+
+func readDomainNameAddr(conn net.Conn) (domainName []byte, port []byte, err error) {
+	length := make([]byte, 1)
+
+	if readLen, err := conn.Read(length); err != nil {
+		return nil, nil, err
+	} else if readLen != 1 {
+		return nil, nil, errors.New("unable to read domain name length")
+	}
+
+	domainName = make([]byte, length[0])
+	port = make([]byte, 2)
+
+	if readLen, err := conn.Read(domainName); err != nil {
+		return nil, nil, err
+	} else if readLen != int(length[0]) {
+		return nil, nil, errors.New("unable to domain name")
+	}
+
+	if readLen, err := conn.Read(port); err != nil {
+		return nil, nil, err
+	} else if readLen != 2 {
+		return nil, nil, errors.New("unable to domain name port")
+	}
+
+	return
+}
+
+func readIPV6Addr(conn net.Conn) (ipv6 []byte, port []byte, err error) {
+	ipv6 = make([]byte, 16)
+	port = make([]byte, 2)
+
+	if readLen, err := conn.Read(ipv6); err != nil {
+		return nil, nil, err
+	} else if readLen != 16 {
+		return nil, nil, errors.New("unable to ipv6")
+	}
+
+	if readLen, err := conn.Read(port); err != nil {
+		return nil, nil, err
+	} else if readLen != 2 {
+		return nil, nil, errors.New("unable to ipv6 port")
+	}
+
+	return
 }
