@@ -176,6 +176,7 @@ func readSockRequest(conn net.Conn) error {
 	return nil
 }
 
+// readIPV4Addr - reads the IPv4 address sent in the address request
 func readIPV4Addr(conn net.Conn) (ipv4 []byte, port []byte, err error) {
 	ipv4 = make([]byte, 4)
 	port = make([]byte, 2)
@@ -195,6 +196,7 @@ func readIPV4Addr(conn net.Conn) (ipv4 []byte, port []byte, err error) {
 	return
 }
 
+// readDomainNameAddr - reads the domain name sent in the address request
 func readDomainNameAddr(conn net.Conn) (domainName []byte, port []byte, err error) {
 	length := make([]byte, 1)
 
@@ -222,6 +224,7 @@ func readDomainNameAddr(conn net.Conn) (domainName []byte, port []byte, err erro
 	return
 }
 
+// readIPV6Addr - reads the IPv6 address in the address request
 func readIPV6Addr(conn net.Conn) (ipv6 []byte, port []byte, err error) {
 	ipv6 = make([]byte, 16)
 	port = make([]byte, 2)
