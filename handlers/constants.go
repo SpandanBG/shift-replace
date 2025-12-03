@@ -47,3 +47,35 @@ const (
 	// IP_V6_addr - IP V6 address: X'04'
 	IP_V6_addr = 0x04
 )
+
+// Connection Replies
+const (
+	// X'00' succeeded
+	SUCCEEDED_connReply = 0x00
+
+	// X'01' general SOCKS server failure
+	GENERAL_SOCKS_SERVER_FAILURE_connReply = 0x01
+
+	// X'02' connection not allowed by ruleset
+	CONNECTION_NOT_ALLOWED_BY_RULESET_connReply = 0x02
+
+	// X'03' Network unreachable
+	NETWORK_UNREACHABLE_connReply = 0x03
+
+	// X'04' Host unreachable
+	HOST_UNREACHABLE_connReply = 0x04
+
+	// X'05' Connection refused
+	CONNECTION_REFUSED_connReply = 0x05
+
+	// X'06' TTL expired
+	TTL_EXPIRED_connReply = 0x06
+
+	// X'07' Command not supported
+	COMMAND_NOT_SUPPORTED_connReply = 0x07
+
+	// X'08' Address type not supported
+	ADDRESS_TYPE_NOT_SUPPORTED_connReply = 0x08
+
+// X'09' to X'FF' unassigned
+)
