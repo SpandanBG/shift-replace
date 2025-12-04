@@ -374,9 +374,9 @@ func readIPV6Addr(conn net.Conn) (ipv6 []byte, port []byte, err error) {
 
 func tunnel(client, remote net.Conn) (readErr, writeErr error) {
 	go func() {
-		io.Copy(remote, client)
+		_, writeErr = io.Copy(remote, client)
 	}()
-	io.Copy(client, remote)
+	_, readErr = io.Copy(client, remote)
 
 	return
 }

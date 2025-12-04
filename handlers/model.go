@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 )
 
 type Socks5_Req struct {
@@ -53,7 +54,14 @@ func (s Socks5_Res) AddrBytes() []byte {
 		return s.addr
 	}
 
-	s.addr = []byte(s.BindAddr)
+	if s.AType == IP_V4_addr {
+		s.addr = net.ParseIP(s.BindAddr).To4()
+	} else if s.AType == IP_V6_addr {
+		s.addr = net.ParseIP(s.BindAddr).To16()
+	} else {
+		s.addr = []byte(s.BindAddr)
+	}
+
 	return s.addr
 }
 
