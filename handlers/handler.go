@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -60,8 +59,26 @@ func handleSOCKS5(conn net.Conn) error {
 		return err
 	}
 
-	if err := readSockRequest(conn); err != nil {
+	req, err := readSockRequest(conn)
+	if err != nil {
 		return err
+	}
+
+	remote, res, err := prepareProxy(req)
+	if err != nil {
+		return err
+	}
+
+	if remote == nil {
+		return errors.New("could not create remote connection")
+	}
+
+	if err := replyConnInfo(conn, res); err != nil {
+		return err
+	}
+
+	if rErr, wErr := tunnel(conn, remote); rErr != nil || wErr != nil {
+		return fmt.Errorf("readError: %v\nwriteError: %v", rErr, wErr)
 	}
 
 	return nil
@@ -136,84 +153,61 @@ func replyMethodSelection(conn net.Conn, methods []byte) error {
 // The SOCKS server will typically evaluate the request based on source
 // and destination addresses, and return one or more reply messages, as
 // appropriate for the request type.
-func readSockRequest(conn net.Conn) error {
+func readSockRequest(conn net.Conn) (Socks5_Req, error) {
 	// ---------------- READ Reqeust Header
 	header := make([]byte, 4)
 	if readLen, err := conn.Read(header); err != nil {
-		return err
+		return Socks5_Req{}, err
 	} else if readLen != 4 {
-		return errors.New("ver to aytp in socks5h request isn't of length 4")
+		return Socks5_Req{}, errors.New("ver to aytp in socks5h request isn't of length 4")
 	}
 
 	ver, cmd, rsv, atyp := header[0], header[1], header[2], header[3]
 
 	if ver != SOCKS5H_VERSION || rsv != RSV {
-		return errors.New("invalid version or rsv")
+		return Socks5_Req{}, errors.New("invalid version or rsv")
 	}
 
 	if cmd < CONNECT_cmd || cmd > UDP_ASSOCIATE_cmd {
-		return errors.New("request cmd type is invalid")
+		return Socks5_Req{}, errors.New("request cmd type is invalid")
 	}
 
 	// ---------------- READ Address and Port
-	var addr, portBigEndian []byte
-	var port int
+	var addr, port []byte
 	var err error
 
 	switch atyp {
 	case IP_V4_addr:
-		addr, portBigEndian, err = readIPV4Addr(conn)
+		addr, port, err = readIPV4Addr(conn)
 	case DOMAINNAME_addr:
-		addr, portBigEndian, err = readDomainNameAddr(conn)
+		addr, port, err = readDomainNameAddr(conn)
 	case IP_V6_addr:
-		addr, portBigEndian, err = readIPV6Addr(conn)
+		addr, port, err = readIPV6Addr(conn)
 	default:
 		err = errors.New("invalid atyp provided")
 	}
 
 	if err != nil {
-		return err
+		return Socks5_Req{}, err
 	}
 
-	port = int(binary.BigEndian.Uint16(portBigEndian))
+	return Socks5_Req{
+		Version: ver,
+		Cmd:     cmd,
+		AType:   atyp,
+		DstAddr: addr,
+		DstPort: port,
+	}, nil
+}
 
-	if cmd == CONNECT_cmd {
-		return handleConnectCmd(conn, addr, port, atyp)
+func prepareProxy(req Socks5_Req) (net.Conn, Socks5_Res, error) {
+	if req.Cmd == CONNECT_cmd {
+		return connectDst(req)
 	}
 
 	// TODO handle for BIND and UDP associate
 
-	return nil
-}
-
-func handleConnectCmd(
-	conn net.Conn,
-	dstAddr []byte,
-	dstPort int,
-	atyp byte,
-) error {
-	var remote net.Conn
-	var lAddr, lPort []byte
-	var err error
-	var rep byte
-
-	if remote, lAddr, lPort, rep, err = connectDst(dstAddr, dstPort, atyp); err != nil {
-		return err
-	}
-
-	if err := replyConnInfo(conn, lAddr, lPort, rep, atyp); err != nil {
-		return err
-	}
-
-	if remote != nil {
-		go func() {
-			io.Copy(remote, conn)
-		}()
-		io.Copy(conn, remote)
-
-	}
-
-	return nil
+	return nil, Socks5_Res{}, nil
 }
 
 // connectDst - In the reply to a CONNECT (refer `replyConnInfo`), BND.PORT
@@ -223,23 +217,33 @@ func handleConnectCmd(
 // reach the SOCKS server, since such servers are often multi-homed.  It is
 // expected that the SOCKS server will use DST.ADDR and DST.PORT, and the
 // client-side source address and port in evaluating the CONNECT request.
-func connectDst(
-	dstAddr []byte,
-	dstPort int,
-	atyp byte,
-) (
-	remote net.Conn,
-	bndAddr, bndPort []byte,
-	rep byte,
-	err error,
-) {
-	switch atyp {
+func connectDst(req Socks5_Req) (remote net.Conn, res Socks5_Res, err error) {
+
+	switch req.AType {
 	case DOMAINNAME_addr:
-		remote, err = net.Dial(TCP_V4, fmt.Sprintf("%s:%d", dstAddr, dstPort))
-		return remote, []byte{0, 0, 0, 0}, []byte{0, 0}, SUCCEEDED_connReply, err
+		remote, err = net.Dial(TCP_V4, req.FullAddr())
+		if err == nil {
+			res.Reply = SUCCEEDED_connReply
+		}
 	default:
-		return nil, nil, nil, ADDRESS_TYPE_NOT_SUPPORTED_connReply, nil
+		res.Reply = ADDRESS_TYPE_NOT_SUPPORTED_connReply
 	}
+
+	localAddr := remote.LocalAddr().(*net.TCPAddr)
+	if remote != nil {
+		if v4 := localAddr.IP.To4(); v4 != nil {
+			res.AType = IP_V4_addr
+		} else if v6 := localAddr.IP.To16(); v6 != nil {
+			res.AType = IP_V6_addr
+		} else {
+			res.AType = DOMAINNAME_addr
+		}
+
+		res.BindAddr = localAddr.IP.String()
+		res.BindPort = localAddr.Port
+	}
+
+	return
 }
 
 // replyConnInfo - The server evaluates the request, and returns a reply formed
@@ -277,14 +281,10 @@ func connectDst(
 // If the chosen method includes encapsulation for purposes of
 // authentication, integrity and/or confidentiality, the replies are
 // encapsulated in the method-dependent encapsulation.
-func replyConnInfo(
-	conn net.Conn,
-	addr, port []byte,
-	rep, atype byte,
-) error {
-	reply := []byte{SOCKS5H_VERSION, rep, RSV, atype}
-	reply = append(reply, addr...)
-	reply = append(reply, port...)
+func replyConnInfo(conn net.Conn, res Socks5_Res) error {
+	reply := []byte{SOCKS5H_VERSION, res.Reply, RSV, res.AType}
+	reply = append(reply, res.AddrBytes()...)
+	reply = append(reply, res.PortBytes()...)
 
 	wLen, err := conn.Write(reply)
 
@@ -368,6 +368,15 @@ func readIPV6Addr(conn net.Conn) (ipv6 []byte, port []byte, err error) {
 	} else if readLen != 2 {
 		return nil, nil, errors.New("unable to ipv6 port")
 	}
+
+	return
+}
+
+func tunnel(client, remote net.Conn) (readErr, writeErr error) {
+	go func() {
+		io.Copy(remote, client)
+	}()
+	io.Copy(client, remote)
 
 	return
 }

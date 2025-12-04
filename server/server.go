@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime/debug"
 
 	"sudocoding.xyz/shiftReplace/handlers"
 )
@@ -31,7 +32,7 @@ func Setup_SOCKS5H_Server() {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Println("Recovered from panic: ", r)
+					fmt.Printf("Recovered from panic: %v\nStack Trace:\n%s\n", r, debug.Stack())
 				}
 			}()
 
