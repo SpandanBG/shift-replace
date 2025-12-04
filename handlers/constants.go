@@ -79,3 +79,8 @@ const (
 
 // X'09' to X'FF' unassigned
 )
+
+// Dial-up Constants
+const (
+	TCP_V4 = "tcp4"
+)

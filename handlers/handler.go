@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -154,16 +156,17 @@ func readSockRequest(conn net.Conn) error {
 	}
 
 	// ---------------- READ Address and Port
-	var addr, port []byte
+	var addr, portBigEndian []byte
+	var port int
 	var err error
 
 	switch atyp {
 	case IP_V4_addr:
-		addr, port, err = readIPV4Addr(conn)
+		addr, portBigEndian, err = readIPV4Addr(conn)
 	case DOMAINNAME_addr:
-		addr, port, err = readDomainNameAddr(conn)
+		addr, portBigEndian, err = readDomainNameAddr(conn)
 	case IP_V6_addr:
-		addr, port, err = readIPV6Addr(conn)
+		addr, portBigEndian, err = readIPV6Addr(conn)
 	default:
 		err = errors.New("invalid atyp provided")
 	}
@@ -171,6 +174,8 @@ func readSockRequest(conn net.Conn) error {
 	if err != nil {
 		return err
 	}
+
+	port = int(binary.BigEndian.Uint16(portBigEndian))
 
 	if cmd == CONNECT_cmd {
 		return handleConnectCmd(conn, addr, port, atyp)
@@ -183,7 +188,8 @@ func readSockRequest(conn net.Conn) error {
 
 func handleConnectCmd(
 	conn net.Conn,
-	dstAddr, dstPort []byte,
+	dstAddr []byte,
+	dstPort int,
 	atyp byte,
 ) error {
 	var remote net.Conn
@@ -218,7 +224,8 @@ func handleConnectCmd(
 // expected that the SOCKS server will use DST.ADDR and DST.PORT, and the
 // client-side source address and port in evaluating the CONNECT request.
 func connectDst(
-	dstAddr, dstPort []byte,
+	dstAddr []byte,
+	dstPort int,
 	atyp byte,
 ) (
 	remote net.Conn,
@@ -228,7 +235,7 @@ func connectDst(
 ) {
 	switch atyp {
 	case DOMAINNAME_addr:
-		remote, err = net.Dial("tcp", string(dstAddr)+":443")
+		remote, err = net.Dial(TCP_V4, fmt.Sprintf("%s:%d", dstAddr, dstPort))
 		return remote, []byte{0, 0, 0, 0}, []byte{0, 0}, SUCCEEDED_connReply, err
 	default:
 		return nil, nil, nil, ADDRESS_TYPE_NOT_SUPPORTED_connReply, nil
