@@ -1,4 +1,4 @@
-package handlers
+package server
 
 // SOCKS5H_VERSION - SOCKS5H Version
 const SOCKS5H_VERSION = 0x05
