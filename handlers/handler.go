@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"slices"
 )
@@ -35,7 +36,7 @@ func Handle_SOCKS5H_Connection(conn net.Conn, ctx context.Context) error {
 //	| 1  |    1     | 1 to 255 |
 //	+----+----------+----------+
 //
-// The VER field is set to X'05' for this version of the protocol.  The
+// The VER field is set to X'05' for this version of the protocol. The
 // NMETHODS field contains the number of method identifier octets that
 // appear in the METHODS field.
 func handleSOCKS5(conn net.Conn) error {
@@ -88,10 +89,10 @@ func handleSOCKS5(conn net.Conn) error {
 //
 // The client and server then enter a method-specific sub-negotiation.
 func replyMethodSelection(conn net.Conn, methods []byte) error {
-	// set reply to no acceptable methods avaiable by default
+	// set reply to no acceptable methods (X'FF) avaiable by default
 	reply := []byte{SOCKS5H_VERSION, NO_ACCEPTABLE_METHODS_method}
 
-	// Select no auth required method if applicable
+	// Select no auth required method (X'00) if applicable
 	if slices.Contains(methods, NO_AUTHENTICATION_REQUIRED_method) {
 		reply[1] = NO_AUTHENTICATION_REQUIRED_method
 	}
@@ -171,13 +172,39 @@ func readSockRequest(conn net.Conn) error {
 		return err
 	}
 
+	if cmd == CONNECT_cmd {
+		return handleConnectCmd(conn, addr, port, atyp)
+	}
+
+	// TODO handle for BIND and UDP associate
+
+	return nil
+}
+
+func handleConnectCmd(
+	conn net.Conn,
+	dstAddr, dstPort []byte,
+	atyp byte,
+) error {
+	var remote net.Conn
+	var lAddr, lPort []byte
+	var err error
 	var rep byte
-	if addr, port, rep, err = connectDst(addr, port, atyp); err != nil {
+
+	if remote, lAddr, lPort, rep, err = connectDst(dstAddr, dstPort, atyp); err != nil {
 		return err
 	}
 
-	if err := replyConnInfo(conn, addr, port, rep, atyp); err != nil {
+	if err := replyConnInfo(conn, lAddr, lPort, rep, atyp); err != nil {
 		return err
+	}
+
+	if remote != nil {
+		go func() {
+			io.Copy(remote, conn)
+		}()
+		io.Copy(conn, remote)
+
 	}
 
 	return nil
@@ -194,17 +221,18 @@ func connectDst(
 	dstAddr, dstPort []byte,
 	atyp byte,
 ) (
+	remote net.Conn,
 	bndAddr, bndPort []byte,
 	rep byte,
 	err error,
 ) {
-	switch(atyp)  {
-		case DOMAINNAME_addr:
-		default:
-			return nil, nil, ADDRESS_TYPE_NOT_SUPPORTED_connReply, nil
+	switch atyp {
+	case DOMAINNAME_addr:
+		remote, err = net.Dial("tcp", string(dstAddr)+":443")
+		return remote, []byte{0, 0, 0, 0}, []byte{0, 0}, SUCCEEDED_connReply, err
+	default:
+		return nil, nil, nil, ADDRESS_TYPE_NOT_SUPPORTED_connReply, nil
 	}
-
-	return
 }
 
 // replyConnInfo - The server evaluates the request, and returns a reply formed
@@ -247,6 +275,19 @@ func replyConnInfo(
 	addr, port []byte,
 	rep, atype byte,
 ) error {
+	reply := []byte{SOCKS5H_VERSION, rep, RSV, atype}
+	reply = append(reply, addr...)
+	reply = append(reply, port...)
+
+	wLen, err := conn.Write(reply)
+
+	if err != nil {
+		return err
+	}
+
+	if wLen != len(reply) {
+		return errors.New("couldn't reply complete connect reply")
+	}
 
 	return nil
 }
@@ -277,6 +318,7 @@ func readDomainNameAddr(conn net.Conn) (
 	port []byte,
 	err error,
 ) {
+	// to hold the length of the domain name
 	length := make([]byte, 1)
 
 	if readLen, err := conn.Read(length); err != nil {
